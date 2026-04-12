@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Job Copilot{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+  <div>
+    <h2>My Applications</h2>
+    <p class="subtitle">Hello, <strong>{{ session.username }}</strong> 👋</p>
+  </div>
+  <a href="{{ url_for('add_job') }}" class="btn btn-primary">+ Add Application</a>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <span class="stat-number">{{ stats.total }}</span>
+    <span class="stat-label">Total</span>
+  </div>
+  <div class="stat-card status-applied">
+    <span class="stat-number">{{ stats.applied }}</span>
+    <span class="stat-label">Applied</span>
+  </div>
+  <div class="stat-card status-interview">
+    <span class="stat-number">{{ stats.interview }}</span>
+    <span class="stat-label">Interview</span>
+  </div>
+  <div class="stat-card status-offer">
+    <span class="stat-number">{{ stats.offer }}</span>
+    <span class="stat-label">Offer</span>
+  </div>
+  <div class="stat-card status-rejected">
+    <span class="stat-number">{{ stats.rejected }}</span>
+    <span class="stat-label">Rejected</span>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div id="applications" class="filter-bar">
+  <span class="filter-label">Filter by status:</span>
+  <a href="{{ url_for('dashboard') }}" class="filter-btn {% if not status_filter %}active{% endif %}">All</a>
+  {% for s in ['Applied', 'Interview', 'Offer', 'Rejected'] %}
+    <a href="{{ url_for('dashboard', status=s) }}"
+       class="filter-btn status-{{ s.lower() }} {% if status_filter == s %}active{% endif %}">{{ s }}</a>
+  {% endfor %}
+</div>
+
+<!-- Table -->
+{% if jobs %}
+<div class="table-wrapper">
+  <table class="jobs-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Company</th>
+        <th>Role</th>
+        <th>Status</th>
+        <th>Date Applied</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td><strong>{{ job.company_name }}</strong></td>
+        <td>{{ job.job_role }}</td>
+        <td>
+          <span class="badge badge-{{ job.status.lower() }}">{{ job.status }}</span>
+        </td>
+        <td class="muted">{{ job.date_applied }}</td>
+        <td class="actions-cell">
+          <a href="{{ url_for('edit_job', job_id=job.id) }}" class="btn btn-outline btn-sm">Edit</a>
+          <form method="POST" action="{{ url_for('delete_job', job_id=job.id) }}"
+                onsubmit="return confirm('Delete this application?');" style="display:inline;">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <p>No applications found. <a href="{{ url_for('add_job') }}">Add your first one →</a></p>
+</div>
+{% endif %}
+{% endblock %}

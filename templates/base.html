@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Job Copilot{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  {% if session.user_id %}
+  <nav class="navbar">
+    <a class="nav-brand" href="{{ url_for('dashboard') }}">✈ Job Copilot</a>
+    <div class="nav-links">
+      <a href="{{ url_for('dashboard') }}"
+         class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        Dashboard
+      </a>
+      <a href="{{ url_for('resume_page') }}"
+         class="nav-link {% if request.endpoint == 'resume_page' %}active{% endif %}">
+        Resume
+      </a>
+      <a href="{{ url_for('resume_tailor') }}"
+         class="nav-link {% if request.endpoint == 'resume_tailor' %}active{% endif %}">
+        Resume Tailor
+      </a>
+      <span class="nav-divider"></span>
+      <span class="nav-user">{{ session.username }}</span>
+      <a href="{{ url_for('logout') }}" class="btn btn-outline btn-sm">Logout</a>
+    </div>
+  </nav>
+  {% endif %}
+
+  <main class="container {% block extra_container_class %}{% endblock %}">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="alerts">
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

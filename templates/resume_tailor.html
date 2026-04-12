@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+{% block title %}Resume Tailor – Job Copilot{% endblock %}
+{% block extra_container_class %}container--wide{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Resume Tailor</h2>
+  <p class="subtitle">Paste a job description and let AI optimise your resume section-by-section — no reformatting, no invented experience.</p>
+</div>
+
+{% if not user.resume_path %}
+<div class="alert alert-warning">
+  You have not uploaded a resume yet.
+  <a href="{{ url_for('resume_page') }}">Upload one here →</a>
+</div>
+{% else %}
+
+<!-- ── Two-column tailor workspace ───────────────────────────────────── -->
+<div class="tailor-workspace">
+
+  <!-- Left panel: Job Description -->
+  <div class="tailor-panel">
+    <div class="tailor-panel-header">
+      <div>
+        <h3 class="tailor-panel-title">Job Description</h3>
+        <span class="tailor-panel-hint">Paste the full job posting</span>
+      </div>
+    </div>
+    <textarea id="jd-input" class="tailor-textarea"
+              placeholder="Paste the job description here…"></textarea>
+    <div class="tailor-panel-footer">
+      <button id="generate-btn" class="btn btn-primary btn-block" onclick="generateTailored()">
+        ✨ Generate Optimized Resume
+      </button>
+    </div>
+  </div>
+
+  <!-- Right panel: Structured HTML output -->
+  <div class="tailor-panel">
+    <div class="tailor-panel-header">
+      <div>
+        <h3 class="tailor-panel-title">Optimized Resume</h3>
+        <span class="tailor-panel-hint" id="output-hint">Results will appear here</span>
+      </div>
+      <button id="copy-btn" class="btn btn-outline btn-sm" onclick="copyToClipboard()"
+              style="display:none;" title="Copy plain text to clipboard">
+        📋 Copy
+      </button>
+    </div>
+
+    <!-- Step progress (shown while generating) -->
+    <div id="tailor-progress" class="tailor-progress" style="display:none;">
+      <div class="progress-steps">
+        <div class="progress-step" id="step-1">
+          <div class="step-dot"></div>
+          <span>Analysing keyword gaps…</span>
+        </div>
+        <div class="progress-step" id="step-2">
+          <div class="step-dot"></div>
+          <span>Improving experience &amp; skills…</span>
+        </div>
+        <div class="progress-step" id="step-3">
+          <div class="step-dot"></div>
+          <span>Finalising structured resume…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="tailor-error" class="analysis-error" style="display:none;"></div>
+
+    <!-- Keywords added badge row -->
+    <div id="keywords-row" class="keywords-added-row" style="display:none;">
+      <span class="keywords-label">Keywords added:</span>
+      <div id="keywords-chips" class="keyword-chips"></div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="output-empty" class="tailor-empty">
+      <p>Your optimized resume will appear here.<br>
+         Only experience, skills and summary are rewritten —<br>
+         all other sections stay exactly as-is.</p>
+    </div>
+
+    <!-- Resume preview — always editable -->
+    <div id="resume-preview" class="resume-preview resume-editable"
+         contenteditable="true" spellcheck="true"
+         style="display:none;"
+         aria-label="Editable resume"></div>
+
+    <!-- Export actions (shown after generation) -->
+    <div id="export-actions" class="tailor-panel-footer export-actions" style="display:none;">
+      <a id="dl-pdf-link" href="#" class="btn btn-primary" onclick="return triggerDownload('pdf')">
+        ⬇ Download PDF
+      </a>
+      <a id="dl-docx-link" href="#" class="btn btn-outline" onclick="return triggerDownload('docx')">
+        ⬇ Download Word (.docx)
+      </a>
+    </div>
+  </div>
+
+</div><!-- /tailor-workspace -->
+
+{% endif %}{# /if user.resume_path #}
+
+<script>
+let currentStructured = null;
+
+// ── Step progress animation ───────────────────────────────────────────────
+let stepTimer = null;
+function startStepProgress() {
+  let step = 1;
+  document.getElementById('tailor-progress').style.display = 'block';
+  setStepActive(1);
+  stepTimer = setInterval(() => {
+    step = Math.min(step + 1, 3);
+    setStepActive(step);
+  }, 5000);
+}
+function stopStepProgress() {
+  clearInterval(stepTimer);
+  document.getElementById('tailor-progress').style.display = 'none';
+  [1,2,3].forEach(i => {
+    const el = document.getElementById(`step-${i}`);
+    el.classList.remove('step-active', 'step-done');
+  });
+}
+function setStepActive(n) {
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById(`step-${i}`);
+    el.classList.remove('step-active', 'step-done');
+    if (i < n) el.classList.add('step-done');
+    else if (i === n) el.classList.add('step-active');
+  }
+}
+
+// ── Generate ─────────────────────────────────────────────────────────────
+async function generateTailored() {
+  const jd = document.getElementById('jd-input').value.trim();
+  if (!jd) { alert('Please paste a job description first.'); return; }
+
+  const btn       = document.getElementById('generate-btn');
+  const errorBox  = document.getElementById('tailor-error');
+  const empty     = document.getElementById('output-empty');
+  const preview   = document.getElementById('resume-preview');
+  const exports   = document.getElementById('export-actions');
+  const copyBtn   = document.getElementById('copy-btn');
+  const kwRow     = document.getElementById('keywords-row');
+  const hint      = document.getElementById('output-hint');
+
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  errorBox.style.display = 'none';
+  empty.style.display = 'none';
+  preview.style.display = 'none';
+  exports.style.display = 'none';
+  copyBtn.style.display = 'none';
+  kwRow.style.display = 'none';
+  startStepProgress();
+
+  try {
+    const res = await fetch('/generate-tailored-resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_description: jd }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errorBox.textContent = data.error || 'An unexpected error occurred.';
+      errorBox.style.display = 'block';
+      empty.style.display = 'block';
+      return;
+    }
+
+    currentStructured = data.structured;
+
+    preview.innerHTML = buildResumeHtml(data.structured);
+    hint.textContent = 'Edit below — export when ready ↓';
+    preview.style.display = 'block';
+    exports.style.display = 'flex';
+    copyBtn.style.display = 'inline-flex';
+
+    // Show keywords added
+    const kws = data.keywords_added || [];
+    if (kws.length) {
+      const chips = document.getElementById('keywords-chips');
+      chips.innerHTML = kws.map(k => `<span class="keyword-chip">${esc(k)}</span>`).join('');
+      kwRow.style.display = 'flex';
+    }
+
+  } catch (err) {
+    errorBox.textContent = 'Network error – could not reach the server.';
+    errorBox.style.display = 'block';
+    empty.style.display = 'block';
+  } finally {
+    stopStepProgress();
+    btn.disabled = false;
+    btn.textContent = '✨ Generate Optimized Resume';
+  }
+}
+
+// ── Build structured HTML from JSON (never uses raw Gemini text) ──────────
+function buildResumeHtml(s) {
+  const h = s.header || {};
+  let html = '';
+
+  // Header
+  // Layout: Name → Title (if present) → Location | Phone | Email | LinkedIn | Portfolio
+  html += '<div class="rv-header">';
+  if (h.name) html += `<h1 class="rv-name">${esc(h.name)}</h1>`;
+  if (h.title) html += `<div class="rv-title">${esc(h.title)}</div>`;
+
+  // Contact row — each field is separately handled so emails/URLs never break
+  const contacts = [];
+  if (h.location) contacts.push(`<span class="rv-contact-phone">${esc(h.location)}</span>`);
+  if (h.phone)    contacts.push(`<span class="rv-contact-phone">${esc(h.phone)}</span>`);
+  if (h.email) {
+    contacts.push(`<a href="mailto:${esc(h.email)}" class="rv-contact-link">${esc(h.email)}</a>`);
+  }
+  if (h.linkedin) {
+    const isUrl = /^https?:\/\//i.test(h.linkedin);
+    const href    = isUrl ? esc(h.linkedin) : '#';
+    const display = isUrl ? h.linkedin.replace(/^https?:\/\//i, '') : h.linkedin;
+    const target  = isUrl ? ' target="_blank" rel="noopener"' : '';
+    contacts.push(`<a href="${href}"${target} class="rv-contact-link">${esc(display)}</a>`);
+  }
+  if (h.portfolio) {
+    const isUrl = /^https?:\/\//i.test(h.portfolio);
+    const href    = isUrl ? esc(h.portfolio) : '#';
+    const display = isUrl ? h.portfolio.replace(/^https?:\/\//i, '') : h.portfolio;
+    const target  = isUrl ? ' target="_blank" rel="noopener"' : '';
+    contacts.push(`<a href="${href}"${target} class="rv-contact-link">${esc(display)}</a>`);
+  }
+  if (contacts.length) {
+    html += `<div class="rv-contact">${contacts.join('<span class="rv-sep"> | </span>')}</div>`;
+  }
+  html += '</div>';
+
+  // Professional Summary
+  if (s.professional_summary) {
+    html += `<div class="rv-section">
+      <h2 class="rv-section-title">Professional Summary</h2>
+      <p class="rv-summary">${esc(s.professional_summary).replace(/\n/g,'<br>')}</p>
+    </div>`;
+  }
+
+  // Areas of Expertise
+  if (s.areas_of_expertise && s.areas_of_expertise.length) {
+    html += `<div class="rv-section">
+      <h2 class="rv-section-title">Areas of Expertise</h2>
+      <ul class="rv-expertise-list">
+        ${s.areas_of_expertise.map(i => `<li>${esc(i)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  // Experience
+  if (s.experience && s.experience.length) {
+    html += `<div class="rv-section"><h2 class="rv-section-title">Professional Experience</h2>`;
+    for (const job of s.experience) {
+      // Build title: Role — Company (new schema) OR title_line (old schema fallback)
+      const role    = job.role    || '';
+      const company = job.company || '';
+      const titleLine = (role && company) ? `${role} \u2014 ${company}`
+                      : (role || company  || job.title_line || '');
+
+      // Build meta: Location | StartDate – EndDate (new schema) OR location_period (fallback)
+      const metaParts = [];
+      const loc = job.location || '';
+      const sd  = job.start_date || '';
+      const ed  = job.end_date   || '';
+      if (loc) metaParts.push(loc);
+      if (sd)  metaParts.push(sd + (ed ? ` \u2013 ${ed}` : ''));
+      const metaLine = metaParts.length ? metaParts.join(' | ')
+                     : (job.location_period || '');
+
+      // Bullets (new schema: highlights; old schema: bullets)
+      const bullets = job.highlights || job.bullets || [];
+
+      html += `<div class="rv-job">
+        <div class="rv-job-title">${esc(titleLine)}</div>`;
+      if (metaLine) {
+        html += `<div class="rv-job-meta">${esc(metaLine)}</div>`;
+      }
+      if (bullets.length) {
+        html += `<ul class="rv-bullets">
+          ${bullets.map(b => `<li>${esc(b)}</li>`).join('')}
+        </ul>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Achievements & Awards
+  if (s.achievements_awards && s.achievements_awards.length) {
+    html += `<div class="rv-section">
+      <h2 class="rv-section-title">Achievements &amp; Awards</h2>
+      <ul class="rv-bullets">
+        ${s.achievements_awards.map(i => `<li>${esc(i)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  // Certifications
+  if (s.certifications && s.certifications.length) {
+    html += `<div class="rv-section">
+      <h2 class="rv-section-title">Certifications</h2>
+      <ul class="rv-bullets">
+        ${s.certifications.map(i => `<li>${esc(i)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  // Education
+  if (s.education && s.education.length) {
+    html += `<div class="rv-section"><h2 class="rv-section-title">Education</h2>`;
+    for (const ed of s.education) {
+      html += `<div class="rv-edu">
+        <div class="rv-edu-degree">${esc(ed.degree || '')}</div>`;
+      if (ed.institution) html += `<div class="rv-edu-inst">${esc(ed.institution)}</div>`;
+      if (ed.period)      html += `<div class="rv-edu-period">${esc(ed.period)}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  return html;
+}
+
+// ── Copy to clipboard ─────────────────────────────────────────────────────
+async function copyToClipboard() {
+  const el = document.getElementById('resume-preview');
+  const text = el ? el.innerText : '';
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000);
+  } catch {
+    alert('Copy failed – please select and copy manually.');
+  }
+}
+
+// ── Download ─────────────────────────────────────────────────────────
+async function triggerDownload(format) {
+  if (!currentStructured) return false;
+
+  const btn = format === 'pdf'
+    ? document.getElementById('dl-pdf-link')
+    : document.getElementById('dl-docx-link');
+  const origText = btn.textContent;
+  btn.textContent = 'Generating…';
+  btn.style.pointerEvents = 'none';
+
+  try {
+    const res = await fetch(`/download/${format}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ structured: currentStructured }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Export failed. Please try again.');
+      return false;
+    }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = format === 'pdf' ? 'optimized_resume.pdf' : 'optimized_resume.docx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Download failed. Please try again.');
+  } finally {
+    btn.textContent = origText;
+    btn.style.pointerEvents = '';
+  }
+  return false;
+}
+
+function esc(s) {
+  if (typeof s !== 'string') return '';
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+{% endblock %}

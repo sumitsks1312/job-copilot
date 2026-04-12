@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Database
+database.db
+
+# Uploaded resumes
+static/uploads/
+
+# API keys / secrets — never commit
+resources/config.env
+
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
