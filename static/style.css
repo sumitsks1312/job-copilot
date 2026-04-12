@@ -42,9 +42,9 @@ a:hover { text-decoration: underline; }
 
 /* ---------- Layout ---------- */
 .container {
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 24px 16px 64px;
+  padding: 24px 24px 64px;
 }
 
 /* ---------- Navbar ---------- */

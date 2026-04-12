@@ -224,6 +224,7 @@ async function saveJob(btn, job) {
         role:        job.title,
         apply_link:  job.apply_link || '',
         description: job.description_full || job.description_snippet || '',
+        posted_at:   job.posted_at || '',
       }),
     });
     const data = await res.json();

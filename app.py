@@ -91,16 +91,19 @@ def init_db():
             status       TEXT    NOT NULL DEFAULT 'Applied',
             date_applied TEXT    NOT NULL,
             apply_link   TEXT    NOT NULL DEFAULT '',
+            date_posted  TEXT    NOT NULL DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
     """)
-    # Migrate existing installations: add apply_link if missing
+    # Migrate existing installations: add columns if missing
     existing_cols = [row[1] for row in db.execute("PRAGMA table_info(jobs)").fetchall()]
     if "apply_link" not in existing_cols:
         db.execute("ALTER TABLE jobs ADD COLUMN apply_link TEXT NOT NULL DEFAULT ''")
     if "job_description" not in existing_cols:
         db.execute("ALTER TABLE jobs ADD COLUMN job_description TEXT NOT NULL DEFAULT ''")
+    if "date_posted" not in existing_cols:
+        db.execute("ALTER TABLE jobs ADD COLUMN date_posted TEXT NOT NULL DEFAULT ''")
     db.commit()
 
 
@@ -694,10 +697,11 @@ def api_search_jobs():
 def save_job_from_search():
     """Save a job card from the search page directly to the user's dashboard."""
     body = request.get_json() or {}
-    company    = (body.get("company")     or "").strip()
-    role       = (body.get("role")        or "").strip()
-    apply_link = (body.get("apply_link")  or "").strip()
-    job_desc   = (body.get("description") or "").strip()[:5000]
+    company     = (body.get("company")     or "").strip()
+    role        = (body.get("role")        or "").strip()
+    apply_link  = (body.get("apply_link")  or "").strip()
+    job_desc    = (body.get("description") or "").strip()[:5000]
+    date_posted = (body.get("posted_at")   or "").strip()[:30]
 
     if not company or not role:
         return jsonify({"error": "Company and role are required."}), 400
@@ -708,9 +712,9 @@ def save_job_from_search():
 
     db = get_db()
     db.execute(
-        "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied, apply_link, job_description)"
-        " VALUES (?, ?, ?, 'Saved', date('now'), ?, ?)",
-        (session["user_id"], company, role, apply_link, job_desc),
+        "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied, apply_link, job_description, date_posted)"
+        " VALUES (?, ?, ?, 'Saved', date('now'), ?, ?, ?)",
+        (session["user_id"], company, role, apply_link, job_desc, date_posted),
     )
     db.commit()
     logger.info("Saved job from search: user=%s company=%r role=%r",

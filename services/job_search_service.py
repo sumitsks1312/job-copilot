@@ -204,10 +204,7 @@ def search_jobs(
 
     params: dict = {
         "query":       full_query,
-        "page":        str(rand_page),
-        "num_pages":   str(num_pages),
-        "date_posted": _DATE_MAP.get(date_posted, "all"),
-        "sort_by":     "RELEVANCE",
+        "date_posted": _DATE_MAP.get(date_posted, "all")
     }
     headers = {
         "X-RapidAPI-Key":  api_key,
