@@ -17,3 +17,6 @@ logs/
 __pycache__/
 *.pyc
 *.pyo
+
+# Job search cache
+.cache/

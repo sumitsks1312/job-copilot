@@ -18,7 +18,7 @@
 <!-- ── Two-column tailor workspace ───────────────────────────────────── -->
 <div class="tailor-workspace">
 
-  <!-- Left panel: Job Description -->
+  <!-- Right panel: Structured HTML output -->
   <div class="tailor-panel">
     <div class="tailor-panel-header">
       <div>
@@ -26,6 +26,8 @@
         <span class="tailor-panel-hint">Paste the full job posting</span>
       </div>
     </div>
+    <!-- Auto-fill notice shown when redirected from dashboard -->
+    <div id="autofill-notice" class="autofill-notice" style="display:none;"></div>
     <textarea id="jd-input" class="tailor-textarea"
               placeholder="Paste the job description here…"></textarea>
     <div class="tailor-panel-footer">
@@ -369,7 +371,7 @@ async function triggerDownload(format) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = format === 'pdf' ? 'optimized_resume.pdf' : 'optimized_resume.docx';
+    a.download = format === 'pdf' ? 'resume.pdf' : 'resume.docx';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -391,5 +393,41 @@ function esc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ── Auto-fill from dashboard "Tailor Resume" click ────────────────────────
+(function autoFillFromDashboard() {
+  const jd      = sessionStorage.getItem('tailor_jd');
+  const error   = sessionStorage.getItem('tailor_jd_error');
+  const role    = sessionStorage.getItem('tailor_role')    || '';
+  const company = sessionStorage.getItem('tailor_company') || '';
+
+  // Always clear immediately after reading
+  sessionStorage.removeItem('tailor_jd');
+  sessionStorage.removeItem('tailor_jd_error');
+  sessionStorage.removeItem('tailor_role');
+  sessionStorage.removeItem('tailor_company');
+
+  if (jd === null) return;  // not coming from dashboard
+
+  const notice  = document.getElementById('autofill-notice');
+  const input   = document.getElementById('jd-input');
+
+  if (error) {
+    notice.textContent = '⚠ ' + error + ' — please paste the job description manually.';
+    notice.className   = 'autofill-notice autofill-notice-warn';
+    notice.style.display = 'block';
+    return;
+  }
+
+  if (jd) {
+    input.value = jd;
+    const label = [role, company].filter(Boolean).join(' @ ');
+    notice.innerHTML = `✅ Job description loaded${label ? ` for <strong>${esc(label)}</strong>` : ''} — generating optimized resume…`;
+    notice.className   = 'autofill-notice autofill-notice-ok';
+    notice.style.display = 'block';
+    // Auto-trigger after short delay so the page paints first
+    setTimeout(generateTailored, 400);
+  }
+})();
 </script>
 {% endblock %}

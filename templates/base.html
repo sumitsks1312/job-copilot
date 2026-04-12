@@ -15,17 +15,25 @@
          class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
         Dashboard
       </a>
-      <a href="{{ url_for('resume_page') }}"
-         class="nav-link {% if request.endpoint == 'resume_page' %}active{% endif %}">
-        Resume
+      <a href="{{ url_for('job_search') }}"
+         class="nav-link {% if request.endpoint == 'job_search' %}active{% endif %}">
+        Job Search
       </a>
       <a href="{{ url_for('resume_tailor') }}"
          class="nav-link {% if request.endpoint == 'resume_tailor' %}active{% endif %}">
         Resume Tailor
       </a>
       <span class="nav-divider"></span>
-      <span class="nav-user">{{ session.username }}</span>
-      <a href="{{ url_for('logout') }}" class="btn btn-outline btn-sm">Logout</a>
+      <div class="nav-dropdown">
+        <button class="nav-dropdown-toggle" onclick="toggleUserMenu(event)">
+          {{ session.username }} <span class="dropdown-caret">▾</span>
+        </button>
+        <div class="nav-dropdown-menu" id="userMenu">
+          <a href="{{ url_for('resume_page') }}" class="dropdown-item">Resume</a>
+          <div class="dropdown-divider"></div>
+          <a href="{{ url_for('logout') }}" class="dropdown-item dropdown-item-danger">Logout</a>
+        </div>
+      </div>
     </div>
   </nav>
   {% endif %}
@@ -43,5 +51,15 @@
 
     {% block content %}{% endblock %}
   </main>
+<script>
+function toggleUserMenu(e) {
+  e.stopPropagation();
+  document.getElementById('userMenu').classList.toggle('open');
+}
+document.addEventListener('click', function() {
+  var m = document.getElementById('userMenu');
+  if (m) m.classList.remove('open');
+});
+</script>
 </body>
 </html>

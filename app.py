@@ -1,10 +1,12 @@
 import logging
 import os
+import re
 import sqlite3
 from datetime import date
 from functools import wraps
 from pathlib import Path
 
+import requests
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -21,6 +23,7 @@ from services.resume_exporter import (
     export_pdf_from_json, export_docx_from_json,   # canonical JSON-based
 )
 from services.resume_parser import extract_text as parse_resume_text, extract_hyperlinks
+from services import job_search_service
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -56,7 +59,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
+        g.db = sqlite3.connect(DATABASE, timeout=5)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
@@ -87,10 +90,17 @@ def init_db():
             job_role     TEXT    NOT NULL,
             status       TEXT    NOT NULL DEFAULT 'Applied',
             date_applied TEXT    NOT NULL,
+            apply_link   TEXT    NOT NULL DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
     """)
+    # Migrate existing installations: add apply_link if missing
+    existing_cols = [row[1] for row in db.execute("PRAGMA table_info(jobs)").fetchall()]
+    if "apply_link" not in existing_cols:
+        db.execute("ALTER TABLE jobs ADD COLUMN apply_link TEXT NOT NULL DEFAULT ''")
+    if "job_description" not in existing_cols:
+        db.execute("ALTER TABLE jobs ADD COLUMN job_description TEXT NOT NULL DEFAULT ''")
     db.commit()
 
 
@@ -308,7 +318,7 @@ def dashboard():
     user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
 
     status_filter = request.args.get("status", "")
-    if status_filter and status_filter in ("Applied", "Interview", "Rejected", "Offer"):
+    if status_filter and status_filter in ("Saved", "Applied", "Interview", "Rejected", "Offer"):
         jobs = db.execute(
             "SELECT * FROM jobs WHERE user_id = ? AND status = ? ORDER BY date_applied DESC",
             (session["user_id"], status_filter),
@@ -322,6 +332,9 @@ def dashboard():
     stats = {
         "total": len(jobs) if not status_filter else db.execute(
             "SELECT COUNT(*) FROM jobs WHERE user_id = ?", (session["user_id"],)).fetchone()[0],
+        "saved": db.execute(
+            "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Saved'",
+            (session["user_id"],)).fetchone()[0],
         "applied": db.execute(
             "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Applied'",
             (session["user_id"],)).fetchone()[0],
@@ -363,7 +376,7 @@ def add_job():
             flash("Company, role, and date are required.", "danger")
             return render_template("add_job.html", today=date.today().isoformat())
 
-        if status not in ("Applied", "Interview", "Rejected", "Offer"):
+        if status not in ("Saved", "Applied", "Interview", "Rejected", "Offer"):
             flash("Invalid status.", "danger")
             return render_template("add_job.html", today=date.today().isoformat())
 
@@ -402,7 +415,7 @@ def edit_job(job_id):
             flash("Company, role, and date are required.", "danger")
             return render_template("edit_job.html", job=job)
 
-        if status not in ("Applied", "Interview", "Rejected", "Offer"):
+        if status not in ("Saved", "Applied", "Interview", "Rejected", "Offer"):
             flash("Invalid status.", "danger")
             return render_template("edit_job.html", job=job)
 
@@ -641,6 +654,198 @@ def download_docx():
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename=optimized_resume.docx"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Routes – Job Search
+# ---------------------------------------------------------------------------
+
+@app.route("/job-search")
+@login_required
+def job_search():
+    return render_template("job_search.html")
+
+
+@app.route("/api/search-jobs", methods=["POST"])
+@login_required
+def api_search_jobs():
+    body = request.get_json() or {}
+    query       = body.get("query", "").strip()
+    location    = body.get("location", "").strip()
+    date_posted = body.get("date_posted", "any")
+
+    if not query:
+        return jsonify({"error": "Job role / keywords are required.", "jobs": []}), 400
+
+    if date_posted not in ("any", "24h", "3days", "week", "month"):
+        date_posted = "any"
+
+    result = job_search_service.search_jobs(
+        query=query,
+        location=location,
+        date_posted=date_posted,
+    )
+    status_code = 200 if not result["error"] else 502
+    return jsonify(result), status_code
+
+
+@app.route("/jobs/save-from-search", methods=["POST"])
+@login_required
+def save_job_from_search():
+    """Save a job card from the search page directly to the user's dashboard."""
+    body = request.get_json() or {}
+    company    = (body.get("company")     or "").strip()
+    role       = (body.get("role")        or "").strip()
+    apply_link = (body.get("apply_link")  or "").strip()
+    job_desc   = (body.get("description") or "").strip()[:5000]
+
+    if not company or not role:
+        return jsonify({"error": "Company and role are required."}), 400
+
+    # Basic URL validation — must start with http if provided
+    if apply_link and not apply_link.startswith(("http://", "https://")):
+        apply_link = ""
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied, apply_link, job_description)"
+        " VALUES (?, ?, ?, 'Saved', date('now'), ?, ?)",
+        (session["user_id"], company, role, apply_link, job_desc),
+    )
+    db.commit()
+    logger.info("Saved job from search: user=%s company=%r role=%r",
+                session["user_id"], company, role)
+    return jsonify({"ok": True}), 201
+
+
+_VALID_STATUSES = {"Saved", "Applied", "Interview", "Offer", "Rejected"}
+
+
+@app.route("/update-job-status", methods=["POST"])
+@login_required
+def update_job_status():
+    body = request.get_json() or {}
+    job_id = body.get("job_id")
+    new_status = (body.get("status") or "").strip()
+
+    if not job_id or new_status not in _VALID_STATUSES:
+        return jsonify({"error": "Invalid job_id or status."}), 400
+
+    db = get_db()
+    result = db.execute(
+        "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
+        (new_status, job_id, session["user_id"]),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "Job not found."}), 404
+    return jsonify({"ok": True}), 200
+
+
+# ---------------------------------------------------------------------------
+# Routes – Job Description Fetch
+# ---------------------------------------------------------------------------
+
+_JD_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+# Tags whose full subtree is stripped before text extraction
+_JD_NOISE_TAGS = {
+    "script", "style", "noscript", "header", "footer",
+    "nav", "aside", "form", "button", "iframe",
+}
+
+# CSS-class/id substrings that hint at a "junk" container
+_JD_NOISE_PATTERNS = re.compile(
+    r"(cookie|banner|modal|popup|nav|header|footer|sidebar|advertisement|promo)",
+    re.I,
+)
+
+
+def _extract_text_from_html(html: str) -> str:
+    """Return clean visible text from a job posting HTML page."""
+    from bs4 import BeautifulSoup  # lazy import — only needed here
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove noise subtrees
+    for tag in soup.find_all(_JD_NOISE_TAGS):
+        tag.decompose()
+
+    # Remove elements whose class/id hints at clutter
+    for tag in soup.find_all(True):
+        cls   = " ".join(tag.get("class", []))
+        tagid = tag.get("id", "")
+        if _JD_NOISE_PATTERNS.search(cls) or _JD_NOISE_PATTERNS.search(tagid):
+            tag.decompose()
+
+    text = soup.get_text(separator="\n")
+    # Collapse blank lines
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return "\n".join(lines)
+
+
+@app.route("/fetch-job-description", methods=["POST"])
+@login_required
+def fetch_job_description():
+    """Fetch and extract job description text from the job's apply_link.
+
+    Accepts either:
+      { "job_id": 123 }  — looks up apply_link from the user's jobs table
+      { "url": "https://..." }  — uses provided URL directly
+
+    Returns { "job_description": "<text>" } or { "error": "..." }.
+    """
+    body   = request.get_json() or {}
+    job_id = body.get("job_id")
+    url    = (body.get("url") or "").strip()
+
+    if job_id:
+        db  = get_db()
+        row = db.execute(
+            "SELECT apply_link, job_description FROM jobs WHERE id = ? AND user_id = ?",
+            (job_id, session["user_id"]),
+        ).fetchone()
+        if row is None:
+            return jsonify({"error": "Job not found."}), 404
+        # Return stored description immediately — no scraping needed
+        stored_jd = (row["job_description"] or "").strip()
+        if stored_jd:
+            return jsonify({"job_description": stored_jd}), 200
+        url = row["apply_link"] or ""
+
+    if not url:
+        return jsonify({"error": "No apply link available for this job."}), 400
+
+    if not url.startswith(("http://", "https://")):
+        return jsonify({"error": "Invalid URL."}), 400
+
+    try:
+        resp = requests.get(url, headers=_JD_FETCH_HEADERS, timeout=10, allow_redirects=True)
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Request timed out fetching job page."}), 504
+    except requests.exceptions.RequestException as exc:
+        logger.warning("JD fetch failed for url=%r: %s", url, exc)
+        return jsonify({"error": "Could not fetch job page. The site may block automated access."}), 502
+
+    content_type = resp.headers.get("Content-Type", "")
+    if "text/html" not in content_type:
+        return jsonify({"error": "Job page did not return HTML content."}), 415
+
+    jd_text = _extract_text_from_html(resp.text)
+    if len(jd_text) < 100:
+        return jsonify({"error": "Could not extract job description — the site may require JavaScript or login."}), 422
+
+    # Truncate to 8 000 chars to avoid overwhelming the AI
+    return jsonify({"job_description": jd_text[:8000]}), 200
 
 
 # ---------------------------------------------------------------------------

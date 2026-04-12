@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Job Search – Job Copilot{% endblock %}
+
+{% block content %}
+<div class="js-page-header">
+  <div>
+    <h2>Job Search</h2>
+    <p class="subtitle">Find roles from LinkedIn, Indeed &amp; Glassdoor in one place.</p>
+  </div>
+</div>
+
+<!-- ── Search form ─────────────────────────────────────────────────── -->
+<div class="js-search-card">
+  <div class="js-search-row">
+    <div class="form-group js-field-role">
+      <label for="js-query">Job title / keywords</label>
+      <input id="js-query" type="text" placeholder="e.g. DevOps, SRE  or  Python Developer"
+             autocomplete="off" />
+    </div>
+
+    <div class="form-group js-field-location">
+      <label for="js-location">Location</label>
+      <input id="js-location" type="text" placeholder="e.g. London, Remote"
+             autocomplete="off" />
+    </div>
+
+    <div class="form-group js-field-date">
+      <label for="js-date">Date posted</label>
+      <select id="js-date">
+        <option value="any">Any time</option>
+        <option value="24h">Past 24 hours</option>
+        <option value="3days">Past 3 days</option>
+        <option value="week">Past week</option>
+        <option value="month">Past month</option>
+      </select>
+    </div>
+
+    <div class="js-search-btn-wrap">
+      <button id="js-search-btn" class="btn btn-primary js-search-submit">
+        Search
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Status / loading ────────────────────────────────────────────── -->
+<div id="js-loading" class="js-loading-row" style="display:none;">
+  <span class="spinner"></span>
+  <span>Searching jobs…</span>
+</div>
+
+<div id="js-error" class="alert alert-danger" style="display:none;"></div>
+
+<!-- ── Result header ──────────────────────────────────────────────── -->
+<div id="js-result-header" class="js-result-header" style="display:none;">
+  <span id="js-result-count" class="js-result-count"></span>
+</div>
+
+<!-- ── Results grid ───────────────────────────────────────────────── -->
+<div id="js-results" class="js-results-grid"></div>
+
+<!-- ── Empty state ────────────────────────────────────────────────── -->
+<div id="js-empty" class="empty-state" style="display:none;">
+  <p>No jobs found. Try different keywords or location.</p>
+</div>
+
+<!-- ── Job card template (cloned by JS) ───────────────────────────── -->
+<template id="job-card-tpl">
+  <article class="job-card">
+    <div class="job-card-header">
+      <div class="job-card-logo-wrap">
+        <img class="job-card-logo" src="" alt="" loading="lazy" />
+        <span class="job-card-logo-fallback"></span>
+      </div>
+      <div class="job-card-meta">
+        <h3 class="job-card-title"></h3>
+        <p class="job-card-company"></p>
+        <p class="job-card-location muted"></p>
+      </div>
+    </div>
+    <div class="job-card-body">
+      <p class="job-card-snippet muted"></p>
+    </div>
+    <div class="job-card-footer">
+      <div class="job-card-tags">
+        <span class="job-card-type badge badge-applied"></span>
+        <span class="job-card-posted muted"></span>
+      </div>
+      <div class="job-card-actions">
+        <a class="btn btn-primary btn-sm job-card-apply" href="#" target="_blank"
+           rel="noopener noreferrer">Apply</a>
+        <button class="btn btn-outline btn-sm job-card-save">Save Job</button>
+      </div>
+    </div>
+  </article>
+</template>
+
+<script>
+const searchBtn  = document.getElementById('js-search-btn');
+const queryInput = document.getElementById('js-query');
+const locInput   = document.getElementById('js-location');
+const dateSelect = document.getElementById('js-date');
+const loadingEl  = document.getElementById('js-loading');
+const errorEl    = document.getElementById('js-error');
+const resultsEl  = document.getElementById('js-results');
+const emptyEl    = document.getElementById('js-empty');
+const resultHdr  = document.getElementById('js-result-header');
+const resultCnt  = document.getElementById('js-result-count');
+const cardTpl    = document.getElementById('job-card-tpl');
+
+// Allow Enter key to trigger search
+[queryInput, locInput].forEach(el =>
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); })
+);
+
+searchBtn.addEventListener('click', runSearch);
+
+async function runSearch() {
+  const query = queryInput.value.trim();
+  if (!query) { queryInput.focus(); return; }
+
+  setUIState('loading');
+
+  try {
+    const res = await fetch('/api/search-jobs', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query:       query,
+        location:    locInput.value.trim(),
+        date_posted: dateSelect.value,
+      }),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      setUIState('error', data.error);
+      return;
+    }
+
+    renderResults(data.jobs || []);
+  } catch (err) {
+    setUIState('error', 'Network error. Please try again.');
+  }
+}
+
+function renderResults(jobs) {
+  resultsEl.innerHTML = '';
+
+  if (jobs.length === 0) {
+    setUIState('empty');
+    return;
+  }
+
+  setUIState('results', null, jobs.length);
+  jobs.forEach(job => resultsEl.appendChild(buildCard(job)));
+}
+
+function buildCard(job) {
+  const frag = cardTpl.content.cloneNode(true);
+  const card = frag.querySelector('.job-card');
+
+  // Logo
+  const logoImg       = card.querySelector('.job-card-logo');
+  const logoFallback  = card.querySelector('.job-card-logo-fallback');
+  if (job.logo) {
+    logoImg.src = job.logo;
+    logoImg.alt = job.company;
+    logoImg.style.display = 'block';
+    logoFallback.style.display = 'none';
+    logoImg.onerror = () => {
+      logoImg.style.display = 'none';
+      logoFallback.style.display = 'flex';
+      logoFallback.textContent = acronym(job.company);
+    };
+  } else {
+    logoImg.style.display = 'none';
+    logoFallback.style.display = 'flex';
+    logoFallback.textContent = acronym(job.company);
+  }
+
+  card.querySelector('.job-card-title').textContent    = job.title;
+  card.querySelector('.job-card-company').textContent  = job.company;
+  card.querySelector('.job-card-location').textContent = job.location;
+  card.querySelector('.job-card-snippet').textContent  = job.description_snippet
+    ? job.description_snippet + '…'
+    : '';
+
+  const typeEl = card.querySelector('.job-card-type');
+  if (job.employment_type) {
+    typeEl.textContent = job.employment_type;
+    typeEl.style.display = 'inline-block';
+  } else {
+    typeEl.style.display = 'none';
+  }
+
+  const postedEl = card.querySelector('.job-card-posted');
+  postedEl.textContent = job.posted_at ? `Posted ${job.posted_at}` : '';
+
+  const applyBtn = card.querySelector('.job-card-apply');
+  if (job.apply_link) {
+    applyBtn.href = job.apply_link;
+  } else {
+    applyBtn.style.display = 'none';
+  }
+
+  const saveBtn = card.querySelector('.job-card-save');
+  saveBtn.addEventListener('click', () => saveJob(saveBtn, job));
+
+  return frag;
+}
+
+async function saveJob(btn, job) {
+  const orig = btn.textContent;
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/jobs/save-from-search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company:     job.company,
+        role:        job.title,
+        apply_link:  job.apply_link || '',
+        description: job.description_full || job.description_snippet || '',
+      }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      btn.textContent = '✓ Saved';
+      btn.classList.add('btn-saved');
+    } else {
+      btn.textContent = orig;
+      btn.disabled = false;
+      alert(data.error || 'Could not save job. Please try again.');
+    }
+  } catch {
+    btn.textContent = orig;
+    btn.disabled = false;
+    alert('Network error. Please try again.');
+  }
+}
+
+function setUIState(state, message, count) {
+  loadingEl.style.display  = 'none';
+  errorEl.style.display    = 'none';
+  emptyEl.style.display    = 'none';
+  resultHdr.style.display  = 'none';
+  resultsEl.innerHTML      = '';
+  searchBtn.disabled       = false;
+
+  if (state === 'loading') {
+    loadingEl.style.display = 'flex';
+    searchBtn.disabled = true;
+  } else if (state === 'error') {
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+  } else if (state === 'empty') {
+    emptyEl.style.display = 'block';
+  } else if (state === 'results') {
+    resultHdr.style.display = 'flex';
+    resultCnt.textContent = `${count} job${count === 1 ? '' : 's'} found`;
+  }
+}
+
+function acronym(name) {
+  return (name || '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(w => w[0] || '')
+    .join('')
+    .toUpperCase();
+}
+</script>
+{% endblock %}

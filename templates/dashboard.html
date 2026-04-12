@@ -7,7 +7,6 @@
     <h2>My Applications</h2>
     <p class="subtitle">Hello, <strong>{{ session.username }}</strong> 👋</p>
   </div>
-  <a href="{{ url_for('add_job') }}" class="btn btn-primary">+ Add Application</a>
 </div>
 
 <!-- Stats -->
@@ -15,6 +14,10 @@
   <div class="stat-card">
     <span class="stat-number">{{ stats.total }}</span>
     <span class="stat-label">Total</span>
+  </div>
+  <div class="stat-card status-saved">
+    <span class="stat-number">{{ stats.saved }}</span>
+    <span class="stat-label">Saved</span>
   </div>
   <div class="stat-card status-applied">
     <span class="stat-number">{{ stats.applied }}</span>
@@ -38,7 +41,7 @@
 <div id="applications" class="filter-bar">
   <span class="filter-label">Filter by status:</span>
   <a href="{{ url_for('dashboard') }}" class="filter-btn {% if not status_filter %}active{% endif %}">All</a>
-  {% for s in ['Applied', 'Interview', 'Offer', 'Rejected'] %}
+  {% for s in ['Saved', 'Applied', 'Interview', 'Offer', 'Rejected'] %}
     <a href="{{ url_for('dashboard', status=s) }}"
        class="filter-btn status-{{ s.lower() }} {% if status_filter == s %}active{% endif %}">{{ s }}</a>
   {% endfor %}
@@ -54,7 +57,7 @@
         <th>Company</th>
         <th>Role</th>
         <th>Status</th>
-        <th>Date Applied</th>
+        <th>Date Modified</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -69,11 +72,26 @@
         </td>
         <td class="muted">{{ job.date_applied }}</td>
         <td class="actions-cell">
-          <a href="{{ url_for('edit_job', job_id=job.id) }}" class="btn btn-outline btn-sm">Edit</a>
+          <div class="actions-inner">
+          {% if job.apply_link %}
+          <a href="{{ job.apply_link }}" target="_blank" rel="noopener noreferrer"
+             class="btn btn-outline btn-sm">Apply ↗</a>
+          {% endif %}
+          <button class="btn btn-tailor btn-sm"
+                  onclick="tailorResume({{ job.id }}, '{{ job.job_role|e }}', '{{ job.company_name|e }}')">
+            ✨ Tailor Resume
+          </button>
+          <select class="status-select" data-job-id="{{ job.id }}"
+                  onchange="updateStatus(this)">
+            {% for s in ['Saved', 'Applied', 'Interview', 'Offer', 'Rejected'] %}
+            <option value="{{ s }}" {% if job.status == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
           <form method="POST" action="{{ url_for('delete_job', job_id=job.id) }}"
                 onsubmit="return confirm('Delete this application?');" style="display:inline;">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
+          </div>
         </td>
       </tr>
       {% endfor %}
@@ -82,7 +100,66 @@
 </div>
 {% else %}
 <div class="empty-state">
-  <p>No applications found. <a href="{{ url_for('add_job') }}">Add your first one →</a></p>
+  <p>No applications found. <a href="{{ url_for('job_search') }}">Search and save jobs →</a></p>
 </div>
 {% endif %}
+
+<script>
+function updateStatus(select) {
+  const jobId = select.dataset.jobId;
+  const newStatus = select.value;
+  const original = select.dataset.original || select.querySelector('[selected]')?.value;
+  fetch('/update-job-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId, status: newStatus }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      const row = select.closest('tr');
+      const badge = row.querySelector('.badge');
+      badge.textContent = newStatus;
+      badge.className = 'badge badge-' + newStatus.toLowerCase();
+    } else {
+      alert(data.error || 'Failed to update status');
+      select.value = original;
+    }
+  })
+  .catch(() => { alert('Network error'); });
+}
+
+async function tailorResume(jobId, role, company) {
+  const btn = event.currentTarget;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Fetching JD…';
+
+  try {
+    const res = await fetch('/fetch-job-description', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId }),
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      // Store empty JD with a note so user can still proceed manually
+      sessionStorage.setItem('tailor_jd', '');
+      sessionStorage.setItem('tailor_jd_error', data.error || 'Could not fetch job description.');
+    } else {
+      sessionStorage.setItem('tailor_jd', data.job_description || '');
+      sessionStorage.removeItem('tailor_jd_error');
+    }
+
+    sessionStorage.setItem('tailor_role', role);
+    sessionStorage.setItem('tailor_company', company);
+    window.location.href = '/resume-tailor';
+  } catch {
+    btn.disabled = false;
+    btn.textContent = origText;
+    alert('Network error — please try again.');
+  }
+}
+</script>
 {% endblock %}
