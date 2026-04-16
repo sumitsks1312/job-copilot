@@ -204,7 +204,9 @@ def search_jobs(
 
     params: dict = {
         "query":       full_query,
-        "date_posted": _DATE_MAP.get(date_posted, "all")
+        "num_pages":   str(num_pages),
+        "date_posted": _DATE_MAP.get(date_posted, "all"),
+        "sort_by":     "RELEVANCE",
     }
     headers = {
         "X-RapidAPI-Key":  api_key,
@@ -256,7 +258,7 @@ def _normalise(raw: dict) -> dict:
         "location":    _build_location(raw),
         "apply_link":  raw.get("job_apply_link", "").strip(),
         "posted_at":   posted_str,
-        "employment_type": raw.get("job_employment_type", "").replace("_", " ").title(),
+        "employment_type": (raw.get("job_employment_type") or "").replace("_", " ").title(),
         "logo":        raw.get("employer_logo", ""),
         "description_snippet": (raw.get("job_description") or "")[:200].strip(),
         "description_full":    (raw.get("job_description") or "")[:5000].strip(),

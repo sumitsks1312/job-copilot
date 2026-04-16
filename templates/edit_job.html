@@ -22,19 +22,25 @@
     <div class="form-row">
       <div class="form-group">
         <label for="status">Status</label>
-        <select id="status" name="status">
-          {% for s in ['Applied', 'Interview', 'Offer', 'Rejected'] %}
+        <select id="status" name="status" onchange="toggleDateField(this.value)">
+          {% for s in ['Saved', 'Applied', 'Interview', 'Offer', 'Rejected'] %}
             <option value="{{ s }}" {% if job.status == s %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="form-group">
+      <div class="form-group" id="date-applied-group">
         <label for="date_applied">Date Applied</label>
         <input type="date" id="date_applied" name="date_applied"
-               value="{{ job.date_applied }}" required />
+               value="{{ job.date_applied }}" />
       </div>
     </div>
     <button type="submit" class="btn btn-primary btn-block">Update Application</button>
   </form>
 </div>
+<script>
+function toggleDateField(status) {
+  document.getElementById('date-applied-group').style.display = status === 'Applied' ? '' : 'none';
+}
+toggleDateField(document.getElementById('status').value);
+</script>
 {% endblock %}

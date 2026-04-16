@@ -89,7 +89,7 @@ def init_db():
             company_name TEXT    NOT NULL,
             job_role     TEXT    NOT NULL,
             status       TEXT    NOT NULL DEFAULT 'Applied',
-            date_applied TEXT    NOT NULL,
+            date_applied TEXT    NOT NULL DEFAULT '',
             apply_link   TEXT    NOT NULL DEFAULT '',
             date_posted  TEXT    NOT NULL DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users(id)
@@ -373,22 +373,53 @@ def add_job():
         company = request.form["company_name"].strip()
         role = request.form["job_role"].strip()
         status = request.form["status"]
-        date_applied = request.form["date_applied"]
+        date_applied = request.form.get("date_applied", "").strip()
+        apply_link   = request.form.get("apply_link", "").strip()
+        job_desc     = request.form.get("job_description", "").strip()[:5000]
+        date_posted  = request.form.get("date_posted", "").strip()[:30]
 
-        if not company or not role or not date_applied:
-            flash("Company, role, and date are required.", "danger")
+        if not company or not role:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"error": "Company and role are required."}), 400
+            flash("Company and role are required.", "danger")
             return render_template("add_job.html", today=date.today().isoformat())
 
         if status not in ("Saved", "Applied", "Interview", "Rejected", "Offer"):
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"error": "Invalid status."}), 400
             flash("Invalid status.", "danger")
             return render_template("add_job.html", today=date.today().isoformat())
 
+        # Only store date_applied when status is Applied
+        if status != "Applied":
+            date_applied = ""
+
+        if apply_link and not apply_link.startswith(("http://", "https://")):
+            apply_link = ""
+
         db = get_db()
+
+        # Block if same company already has an Applied entry for this user
+        existing = db.execute(
+            "SELECT id FROM jobs WHERE user_id = ? AND status = 'Applied'"
+            " AND LOWER(company_name) = LOWER(?)",
+            (session["user_id"], company),
+        ).fetchone()
+        if existing:
+            msg = f"A job application for {company} already exists in the system."
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"error": msg}), 409
+            flash(msg, "danger")
+            return render_template("add_job.html", today=date.today().isoformat())
+
         db.execute(
-            "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied) VALUES (?,?,?,?,?)",
-            (session["user_id"], company, role, status, date_applied),
+            "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied, apply_link, job_description, date_posted)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (session["user_id"], company, role, status, date_applied, apply_link, job_desc, date_posted),
         )
         db.commit()
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"ok": True}), 201
         flash("Job application added.", "success")
         return redirect(url_for("dashboard"))
 
@@ -412,15 +443,19 @@ def edit_job(job_id):
         company = request.form["company_name"].strip()
         role = request.form["job_role"].strip()
         status = request.form["status"]
-        date_applied = request.form["date_applied"]
+        date_applied = request.form.get("date_applied", "").strip()
 
-        if not company or not role or not date_applied:
-            flash("Company, role, and date are required.", "danger")
+        if not company or not role:
+            flash("Company and role are required.", "danger")
             return render_template("edit_job.html", job=job)
 
         if status not in ("Saved", "Applied", "Interview", "Rejected", "Offer"):
             flash("Invalid status.", "danger")
             return render_template("edit_job.html", job=job)
+
+        # Only store date_applied when status is Applied
+        if status != "Applied":
+            date_applied = ""
 
         db.execute(
             "UPDATE jobs SET company_name=?, job_role=?, status=?, date_applied=? WHERE id=? AND user_id=?",
@@ -711,9 +746,19 @@ def save_job_from_search():
         apply_link = ""
 
     db = get_db()
+
+    # Block save if same company already has an Applied entry for this user
+    existing = db.execute(
+        "SELECT id FROM jobs WHERE user_id = ? AND status = 'Applied'"
+        " AND LOWER(company_name) = LOWER(?)",
+        (session["user_id"], company),
+    ).fetchone()
+    if existing:
+        return jsonify({"error": f"A job application for {company} already exists in the system."}), 409
+
     db.execute(
         "INSERT INTO jobs (user_id, company_name, job_role, status, date_applied, apply_link, job_description, date_posted)"
-        " VALUES (?, ?, ?, 'Saved', date('now'), ?, ?, ?)",
+        " VALUES (?, ?, ?, 'Saved', '', ?, ?, ?)",
         (session["user_id"], company, role, apply_link, job_desc, date_posted),
     )
     db.commit()
@@ -736,10 +781,16 @@ def update_job_status():
         return jsonify({"error": "Invalid job_id or status."}), 400
 
     db = get_db()
-    result = db.execute(
-        "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
-        (new_status, job_id, session["user_id"]),
-    )
+    if new_status == "Applied":
+        result = db.execute(
+            "UPDATE jobs SET status = ?, date_applied = date('now') WHERE id = ? AND user_id = ?",
+            (new_status, job_id, session["user_id"]),
+        )
+    else:
+        result = db.execute(
+            "UPDATE jobs SET status = ?, date_applied = '' WHERE id = ? AND user_id = ?",
+            (new_status, job_id, session["user_id"]),
+        )
     db.commit()
     if result.rowcount == 0:
         return jsonify({"error": "Job not found."}), 404

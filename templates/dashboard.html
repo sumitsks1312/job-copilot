@@ -7,6 +7,49 @@
     <h2>My Applications</h2>
     <p class="subtitle">Hello, <strong>{{ session.username }}</strong> 👋</p>
   </div>
+  <button class="btn btn-primary" onclick="document.getElementById('add-job-modal').classList.add('open')">+ Add Application</button>
+</div>
+
+<!-- Add Application Modal -->
+<div id="add-job-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>Add Application</h3>
+      <button class="modal-close" onclick="document.getElementById('add-job-modal').classList.remove('open')">&times;</button>
+    </div>
+    <form id="add-job-form" novalidate>
+      <div id="modal-error" class="alert alert-danger" style="display:none;margin-bottom:12px"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="m_company_name">Company Name <span class="req">*</span></label>
+          <input type="text" id="m_company_name" name="company_name" required placeholder="e.g. Acme Corp" />
+        </div>
+        <div class="form-group">
+          <label for="m_job_role">Job Role <span class="req">*</span></label>
+          <input type="text" id="m_job_role" name="job_role" required placeholder="e.g. DevOps Engineer" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="m_apply_link">Job / Apply Link</label>
+        <input type="url" id="m_apply_link" name="apply_link" placeholder="https://..." />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="m_date_posted">Date Posted</label>
+          <input type="date" id="m_date_posted" name="date_posted" />
+        </div>
+      </div>
+      <input type="hidden" name="status" value="Saved" />
+      <div class="form-group">
+        <label for="m_job_description">Job Description</label>
+        <textarea id="m_job_description" name="job_description" rows="5" placeholder="Paste the job description here…"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn btn-outline" onclick="closeAddModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="modal-submit-btn">Save Application</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <!-- Stats -->
@@ -54,11 +97,11 @@
     <thead>
       <tr>
         <th>#</th>
-        <th>Company</th>
-        <th>Role</th>
-        <th>Status</th>
-        <th>Date Applied</th>
-        <th>Date Posted</th>
+        <th class="sortable" data-col="1" onclick="sortTable(1)">Company <span class="sort-icon">⇅</span></th>
+        <th class="sortable" data-col="2" onclick="sortTable(2)">Role <span class="sort-icon">⇅</span></th>
+        <th class="sortable" data-col="3" onclick="sortTable(3)">Status <span class="sort-icon">⇅</span></th>
+        <th class="sortable" data-col="4" onclick="sortTable(4)">Date Applied <span class="sort-icon">⇅</span></th>
+        <th class="sortable" data-col="5" onclick="sortTable(5)">Date Posted <span class="sort-icon">⇅</span></th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -71,7 +114,7 @@
         <td>
           <span class="badge badge-{{ job.status.lower() }}">{{ job.status }}</span>
         </td>
-        <td class="muted">{{ job.date_applied }}</td>
+        <td class="muted">{{ job.date_applied or '—' }}</td>
         <td class="muted">{{ job.date_posted or '—' }}</td>
         <td class="actions-cell">
           <div class="actions-inner">
@@ -100,6 +143,7 @@
     </tbody>
   </table>
 </div>
+<div id="pagination"></div>
 {% else %}
 <div class="empty-state">
   <p>No applications found. <a href="{{ url_for('job_search') }}">Search and save jobs →</a></p>
@@ -107,6 +151,131 @@
 {% endif %}
 
 <script>
+let _sortCol = -1, _sortAsc = true;
+function sortTable(col) {
+  const tbody = document.querySelector('.jobs-table tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (_sortCol === col) {
+    _sortAsc = !_sortAsc;
+  } else {
+    _sortCol = col;
+    _sortAsc = true;
+  }
+  rows.sort((a, b) => {
+    const aText = (a.cells[col]?.textContent || '').trim();
+    const bText = (b.cells[col]?.textContent || '').trim();
+    const aEmpty = aText === '—' || aText === '';
+    const bEmpty = bText === '—' || bText === '';
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+    // Date columns (4 = Date Applied, 5 = Date Posted)
+    if (col === 4 || col === 5) {
+      const aD = new Date(aText), bD = new Date(bText);
+      if (!isNaN(aD) && !isNaN(bD)) return _sortAsc ? aD - bD : bD - aD;
+    }
+    return _sortAsc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+  });
+  rows.forEach((row, i) => {
+    row.cells[0].textContent = i + 1;
+    tbody.appendChild(row);
+  });
+  renderPage(1);
+  document.querySelectorAll('.sortable').forEach(th => {
+    const icon = th.querySelector('.sort-icon');
+    if (parseInt(th.dataset.col) === col) {
+      icon.textContent = _sortAsc ? '↑' : '↓';
+      th.classList.add('sort-active');
+    } else {
+      icon.textContent = '⇅';
+      th.classList.remove('sort-active');
+    }
+  });
+}
+
+const PAGE_SIZE = 10;
+let _currentPage = 1;
+
+function renderPage(page) {
+  const rows = Array.from(document.querySelectorAll('.jobs-table tbody tr'));
+  if (!rows.length) return;
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  _currentPage = Math.max(1, Math.min(page, totalPages));
+  const start = (_currentPage - 1) * PAGE_SIZE;
+  rows.forEach((row, i) => {
+    row.style.display = (i >= start && i < start + PAGE_SIZE) ? '' : 'none';
+  });
+  const el = document.getElementById('pagination');
+  if (!el) return;
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  let html = '<div class="pagination">';
+  html += `<button class="page-btn" onclick="renderPage(${_currentPage - 1})"${_currentPage === 1 ? ' disabled' : ''}>&larr; Prev</button>`;
+  for (let i = 1; i <= totalPages; i++) {
+    html += `<button class="page-btn${i === _currentPage ? ' page-active' : ''}" onclick="renderPage(${i})">${i}</button>`;
+  }
+  html += `<button class="page-btn" onclick="renderPage(${_currentPage + 1})"${_currentPage === totalPages ? ' disabled' : ''}>Next &rarr;</button>`;
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', () => renderPage(1));
+
+function closeAddModal() {
+  document.getElementById('add-job-modal').classList.remove('open');
+  document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('add-job-form').reset();
+}
+
+document.getElementById('add-job-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeAddModal();
+});
+
+document.getElementById('add-job-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById('modal-submit-btn');
+  const errorEl = document.getElementById('modal-error');
+  const form = e.target;
+
+  const company = form.company_name.value.trim();
+  const role = form.job_role.value.trim();
+  if (!company || !role) {
+    errorEl.textContent = 'Company and role are required.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  errorEl.style.display = 'none';
+
+  const body = new URLSearchParams(new FormData(form)).toString();
+  try {
+    const res = await fetch('{{ url_for("add_job") }}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: body,
+    });
+    const data = await res.json();
+    if (data.ok) {
+      window.location.reload();
+    } else {
+      errorEl.textContent = data.error || 'Could not save application.';
+      errorEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Save Application';
+    }
+  } catch {
+    errorEl.textContent = 'Network error. Please try again.';
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Save Application';
+  }
+});
+
 function updateStatus(select) {
   const jobId = select.dataset.jobId;
   const newStatus = select.value;
