@@ -792,13 +792,15 @@ def update_job_status():
 
     db = get_db()
     if new_status == "Applied":
+        # Set date_applied to today only if not already set
         result = db.execute(
-            "UPDATE jobs SET status = ?, date_applied = date('now') WHERE id = ? AND user_id = ?",
+            "UPDATE jobs SET status = ?, date_applied = CASE WHEN date_applied = '' THEN date('now') ELSE date_applied END WHERE id = ? AND user_id = ?",
             (new_status, job_id, session["user_id"]),
         )
     else:
+        # Keep date_applied intact — never clear it once set
         result = db.execute(
-            "UPDATE jobs SET status = ?, date_applied = '' WHERE id = ? AND user_id = ?",
+            "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
             (new_status, job_id, session["user_id"]),
         )
     db.commit()
