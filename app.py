@@ -8,7 +8,7 @@ from pathlib import Path
 
 import requests
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
-                   request, session, url_for)
+                   request, send_from_directory, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -54,6 +54,13 @@ UPLOAD_FOLDER = os.path.join(_DATA_DIR, "uploads")
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+@app.route("/uploads/<path:filename>")
+@app.route("/static/uploads/<path:filename>")
+def serve_upload(filename):
+    """Serve uploaded files from the persistent DATA_DIR/uploads directory."""
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +506,7 @@ def analyze_resume():
     if not user or not user["resume_path"]:
         return jsonify({"error": "No resume uploaded. Please upload a resume first."}), 400
 
-    filepath = os.path.join(app.root_path, "static", user["resume_path"])
+    filepath = os.path.join(UPLOAD_FOLDER, os.path.basename(user["resume_path"]))
     if not os.path.isfile(filepath):
         return jsonify({"error": "Uploaded resume file not found on server."}), 404
 
@@ -556,7 +563,7 @@ def generate_tailored_resume():
     if not user or not user["resume_path"]:
         return jsonify({"error": "No resume uploaded. Please upload a resume first."}), 400
 
-    filepath = os.path.join(app.root_path, "static", user["resume_path"])
+    filepath = os.path.join(UPLOAD_FOLDER, os.path.basename(user["resume_path"]))
     if not os.path.isfile(filepath):
         return jsonify({"error": "Resume file not found on server."}), 404
 
