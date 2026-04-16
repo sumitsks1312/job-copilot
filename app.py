@@ -839,7 +839,7 @@ def _extract_text_from_html(html: str) -> str:
 
     # Remove elements whose class/id hints at clutter
     for tag in soup.find_all(True):
-        if not hasattr(tag, "attrs"):
+        if not hasattr(tag, "attrs") or not tag.attrs:
             continue
         cls   = " ".join(tag.get("class", []))
         tagid = tag.get("id", "")
