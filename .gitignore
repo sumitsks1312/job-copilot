@@ -9,6 +9,10 @@ static/uploads/
 
 # API keys / secrets — never commit
 resources/config.env
+.env
+
+# Docker persistent data
+data/
 
 # Logs
 logs/

@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persists database.db and uploads/ on the host under ./data/
+      - ./data:/data
+    env_file:
+      - .env
+    restart: unless-stopped

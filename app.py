@@ -46,8 +46,11 @@ logger = logging.getLogger("app")
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me-in-production")
 
-DATABASE = os.path.join(app.root_path, "database.db")
-UPLOAD_FOLDER = os.path.join(app.root_path, "static", "uploads")
+# DATA_DIR lets Docker/EC2 persist database and uploads outside the container.
+# Defaults to the app root so local dev works with no env var set.
+_DATA_DIR = os.environ.get("DATA_DIR", app.root_path)
+DATABASE = os.path.join(_DATA_DIR, "database.db")
+UPLOAD_FOLDER = os.path.join(_DATA_DIR, "uploads")
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
